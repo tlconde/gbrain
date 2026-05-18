@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { buildSyncManifest, isSyncable, pathToSlug, pruneDir } from '../src/core/sync.ts';
+import { buildSyncManifest, isSyncable, pathToSlug, pruneDir, isCodeFilePath } from '../src/core/sync.ts';
 import { buildGitInvocation } from '../src/commands/sync.ts';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
 import { join } from 'path';
@@ -148,6 +148,31 @@ describe('pruneDir', () => {
 
   test('empty string returns true (defensive default)', () => {
     expect(pruneDir('')).toBe(true);
+  });
+});
+
+describe('isCodeFilePath', () => {
+  test('v0.36.x #878 regression: Terraform / HCL extensions are admitted', () => {
+    expect(isCodeFilePath('infra/main.tf')).toBe(true);
+    expect(isCodeFilePath('infra/prod.tfvars')).toBe(true);
+    expect(isCodeFilePath('modules/network/variables.hcl')).toBe(true);
+  });
+
+  test('extensions are case-insensitive', () => {
+    expect(isCodeFilePath('INFRA/MAIN.TF')).toBe(true);
+    expect(isCodeFilePath('Modules/Net/Vars.HCL')).toBe(true);
+  });
+
+  test('does not false-positive on lookalike suffixes', () => {
+    expect(isCodeFilePath('docs/notes.txt')).toBe(false);
+    expect(isCodeFilePath('readme.tflint')).toBe(false);
+    expect(isCodeFilePath('config.hcling')).toBe(false);
+  });
+
+  test('still accepts the v0.20.0 baseline set (regression guard)', () => {
+    expect(isCodeFilePath('src/foo.ts')).toBe(true);
+    expect(isCodeFilePath('src/bar.py')).toBe(true);
+    expect(isCodeFilePath('config.toml')).toBe(true);
   });
 });
 
