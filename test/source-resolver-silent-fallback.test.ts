@@ -15,6 +15,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { resolveSourceId } from '../src/core/source-resolver.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -116,33 +117,21 @@ describe('source-resolver silent-fallback tiers (codex P1-F)', () => {
   });
 
   describe('tier 2 — GBRAIN_SOURCE env (throw-on-invalid contract)', () => {
-    const origEnv = process.env.GBRAIN_SOURCE;
-    afterAll(() => {
-      if (origEnv === undefined) delete process.env.GBRAIN_SOURCE;
-      else process.env.GBRAIN_SOURCE = origEnv;
-    });
-
     test('valid env value is honored', async () => {
       await engine.executeRaw(
         `INSERT INTO sources (id, name, config) VALUES ('delta', 'delta', '{}'::jsonb)
          ON CONFLICT (id) DO NOTHING`,
       );
-      process.env.GBRAIN_SOURCE = 'delta';
-      try {
+      await withEnv({ GBRAIN_SOURCE: 'delta' }, async () => {
         const resolved = await resolveSourceId(engine, null, cwd);
         expect(resolved).toBe('delta');
-      } finally {
-        delete process.env.GBRAIN_SOURCE;
-      }
+      });
     });
 
     test('underscore in GBRAIN_SOURCE THROWS (tier-2 contract)', async () => {
-      process.env.GBRAIN_SOURCE = 'has_underscore';
-      try {
+      await withEnv({ GBRAIN_SOURCE: 'has_underscore' }, async () => {
         await expect(resolveSourceId(engine, null, cwd)).rejects.toThrow(/GBRAIN_SOURCE/);
-      } finally {
-        delete process.env.GBRAIN_SOURCE;
-      }
+      });
     });
   });
 });
