@@ -144,7 +144,10 @@ describeIfDB('autopilot fan-out — Postgres E2E', () => {
     await seedSource('full-round-trip');
     await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
 
-    const ts = '2026-05-22T15:00:00.000Z';
+    // Relative timestamp inside the 60-min freshness window. A prior version
+    // pinned this to '2026-05-22T15:00:00.000Z' which started failing once
+    // wall-clock drifted past 60 minutes from that point.
+    const ts = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     const updated = await engine.updateSourceConfig('full-round-trip', {
       last_full_cycle_at: ts,
     });
