@@ -27,11 +27,6 @@ describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end'
   let tmpHome: string;
   let origHome: string | undefined;
   let origZeKey: string | undefined;
-  // init.ts:455 fails loud when MULTIPLE embedding providers are env-ready
-  // (non-TTY path). Developer machines commonly have OPENAI_API_KEY +
-  // VOYAGE_API_KEY + ZEROENTROPY_API_KEY all set; this test wants exactly
-  // ZE to be the env-ready provider. Save+unset the others in beforeEach,
-  // restore in afterEach.
   let origOpenaiKey: string | undefined;
   let origVoyageKey: string | undefined;
 
@@ -39,13 +34,18 @@ describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end'
     tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-e2e-fresh-'));
     origHome = process.env.GBRAIN_HOME;
     origZeKey = process.env.ZEROENTROPY_API_KEY;
+    // Save + clear OPENAI_API_KEY + VOYAGE_API_KEY so init only sees
+    // one provider as env-ready (ZE). Without this, dev machines with
+    // multi-provider env (Garry's setup) fail init's disambiguation gate
+    // ("Multiple embedding providers env-ready: openai, voyage,
+    // zeroentropyai") before the test body runs.
     origOpenaiKey = process.env.OPENAI_API_KEY;
     origVoyageKey = process.env.VOYAGE_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.VOYAGE_API_KEY;
     process.env.GBRAIN_HOME = tmpHome;
     // Stub key so init's setup-hint check passes.
     process.env.ZEROENTROPY_API_KEY = 'sk-test-ze';
-    delete process.env.OPENAI_API_KEY;
-    delete process.env.VOYAGE_API_KEY;
   });
 
   afterEach(() => {
@@ -54,10 +54,8 @@ describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end'
     else process.env.GBRAIN_HOME = origHome;
     if (origZeKey === undefined) delete process.env.ZEROENTROPY_API_KEY;
     else process.env.ZEROENTROPY_API_KEY = origZeKey;
-    if (origOpenaiKey === undefined) delete process.env.OPENAI_API_KEY;
-    else process.env.OPENAI_API_KEY = origOpenaiKey;
-    if (origVoyageKey === undefined) delete process.env.VOYAGE_API_KEY;
-    else process.env.VOYAGE_API_KEY = origVoyageKey;
+    if (origOpenaiKey !== undefined) process.env.OPENAI_API_KEY = origOpenaiKey;
+    if (origVoyageKey !== undefined) process.env.VOYAGE_API_KEY = origVoyageKey;
     __setEmbedTransportForTests(null);
     // Restore legacy-preload gateway state.
     configureGateway({
