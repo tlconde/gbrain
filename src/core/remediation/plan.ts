@@ -46,7 +46,7 @@ export async function computeRemediationPlan(
   // The recommendation generator works from BrainHealth + context alone.
   const health = await engine.getHealth();
   const ctx = await loadRecommendationContext(engine);
-  const recs = computeRecommendations(health, ctx);
+  const recs = computeRecommendations(health, ctx, opts.extraRemediations ?? []);
   const syntheticChecks = SYNTHETIC_CHECK_NAMES.map((name) => ({
     name,
     status: 'ok' as const,

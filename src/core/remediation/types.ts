@@ -17,6 +17,15 @@ import type { RemediationStep } from '../remediation-step.ts';
 export interface RemediationPlanOpts {
   /** Target brain_score (default: 90). Used to drive recommendation count. */
   targetScore?: number;
+  /**
+   * v0.42.0.0 (A2 + codex #3): caller-supplied RemediationStep entries
+   * threaded into the planner via the third arg of computeRecommendations.
+   * Onboard wires the 4 new check helpers (embed_staleness,
+   * entity_link_coverage, timeline_coverage, takes_count) here. doctor's
+   * existing --remediation-plan call passes empty (preserving legacy
+   * behavior).
+   */
+  extraRemediations?: RemediationStep[];
 }
 
 /**
