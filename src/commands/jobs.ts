@@ -1563,6 +1563,22 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     });
   });
 
+  // v0.42.0.0 (A12, T9): extract-takes-from-pages handler. PROTECTED
+  // (LLM-bearing). Two-gate consent enforced at the handler boundary:
+  // refuses to run unless takes.bootstrap_enabled config is true, even
+  // when allowProtectedSubmit was set at queue.add time.
+  worker.register('extract-takes-from-pages', async (job) => {
+    const { extractTakesFromPages } = await import('../core/extract-takes-from-pages.ts');
+    const data = (job.data ?? {}) as { sourceId?: string; maxPages?: number };
+    const bootstrapCfg = await engine.getConfig('takes.bootstrap_enabled');
+    const bootstrapEnabled = bootstrapCfg === 'true' || bootstrapCfg === '1';
+    return await extractTakesFromPages(engine, {
+      bootstrapEnabled,
+      sourceIdFilter: data.sourceId,
+      maxPages: data.maxPages,
+    });
+  });
+
   // v0.42.0.0 (A11, T8): extract-timeline-from-meetings handler. Wraps
   // extractTimelineFromMeetings. NOT in PROTECTED_JOB_NAMES (pure SQL + string
   // scan, no LLM spend).
