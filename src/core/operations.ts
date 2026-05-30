@@ -10,9 +10,7 @@ import { clampSearchLimit } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
 import type { PageType } from './types.ts';
 import { importFromContent } from './import-file.ts';
-import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
-import { mkdirSync, writeFileSync, existsSync, statSync } from 'fs';
-import { dirname } from 'path';
+import { writePageThrough } from './write-through.ts';
 import { hybridSearch, hybridSearchCached } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
@@ -715,38 +713,20 @@ const put_page: Operation = {
     const isSandboxSubagent = ctx.viaSubagent === true
       && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
     if (!ctx.dryRun && result.status !== 'error' && !isSandboxSubagent) {
-      try {
-        const repoPath = await ctx.engine.getConfig('sync.repo_path');
-        if (!repoPath) {
-          writeThrough = { written: false, skipped: 'no_repo_configured' };
-        } else if (!existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
-          writeThrough = { written: false, skipped: 'repo_not_found' };
-        } else {
-          const sourceId = ctx.sourceId ?? 'default';
-          const writtenPage = await ctx.engine.getPage(result.slug, { sourceId });
-          if (writtenPage) {
-            const tags = await ctx.engine.getTags(result.slug, { sourceId });
-            const provenanceVia = ctx.remote === false ? 'put_page' : 'mcp:put_page';
-            const md = serializePageToMarkdown(writtenPage, tags, {
-              frontmatterOverrides: {
-                ingested_via: provenanceVia,
-                ingested_at: new Date().toISOString(),
-                source_kind: provenanceVia,
-              },
-            });
-            const filePath = resolvePageFilePath(repoPath as string, result.slug, sourceId);
-            mkdirSync(dirname(filePath), { recursive: true });
-            writeFileSync(filePath, md, 'utf8');
-            writeThrough = { written: true, path: filePath };
-          } else {
-            writeThrough = { written: false, skipped: 'page_not_found_after_write' };
-          }
-        }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        ctx.logger.warn(`[put_page] write-through failed for ${result.slug}: ${msg}`);
-        writeThrough = { written: false, error: msg };
-      }
+      const sourceId = ctx.sourceId ?? 'default';
+      const provenanceVia = ctx.remote === false ? 'put_page' : 'mcp:put_page';
+      // Shared canonical write-through (also used by `gbrain brainstorm/lsd
+      // --save`). Renders the file from the saved DB row and writes it
+      // atomically; never throws (failures land in skipped/error).
+      writeThrough = await writePageThrough(ctx.engine, result.slug, {
+        sourceId,
+        frontmatterOverrides: {
+          ingested_via: provenanceVia,
+          ingested_at: new Date().toISOString(),
+          source_kind: provenanceVia,
+        },
+        logger: ctx.logger,
+      });
     } else if (isSandboxSubagent) {
       writeThrough = { written: false, skipped: 'subagent_sandbox' };
     } else if (ctx.dryRun) {
@@ -1338,6 +1318,14 @@ const query: Operation = {
       description:
         "v0.36: route vector search through a non-default embedding column. Defaults to 'embedding' (OpenAI 1536d) unless `search_embedding_column` config sets a different default. Per-call override for A/B benchmarking across providers (e.g. 'embedding_voyage', 'embedding_zeroentropy'). Column MUST be declared in the `embedding_columns` config registry — unknown names throw with a paste-ready hint listing valid columns.",
     },
+    adaptive_return: {
+      type: 'boolean',
+      description:
+        "v0.41.33 — return a TIGHT, intent-sized result set instead of the full top-K. YOU (the agent) set this per query to serve the user well:\n" +
+        "  TRUE when the user's question has a small, specific answer — a lookup ('what is X', 'who is Y', 'what's my <thing>', 'what did Z decide'), a single-fact recall, or when you'll route the result into a precise downstream step (a classifier, a decision, an exact citation). The user gets the answer, not a wall of loosely-related pages, and you spend fewer tokens reading noise.\n" +
+        "  Omit / FALSE for breadth — 'everything about X', 'list all', 'what do I know about Y', exploration, brainstorming, or any time you'd rather see more candidates and judge for yourself. Recall matters more there, so take the full top-K.\n" +
+        "Safe by construction: it NEVER returns empty when there are matches (you always get at least the top hit), and it only applies to the first page (omit when paginating). Caps come from config (search.adaptive_return_entity_max / _other_max; default 2 / 6) — pass `limit` 1 alongside this for a hard single-answer cap.",
+    },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
@@ -1427,6 +1415,9 @@ const query: Operation = {
       // Source scope is already threaded via ...querySourceScope above
       // (master's #1182 cleanup of the duplicate sourceScopeOpts spread).
       embeddingColumn: embeddingColumnParam,
+      // v0.41.33 — agent-explicit adaptive return-sizing. Omitted = off
+      // (config default applies). hybridSearchCached skips the cache when on.
+      adaptiveReturn: typeof p.adaptive_return === 'boolean' ? (p.adaptive_return as boolean) : undefined,
     });
     const latency_ms = Date.now() - startedAt;
 

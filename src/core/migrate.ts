@@ -4920,6 +4920,48 @@ export const MIGRATIONS: Migration[] = [
         EXECUTE FUNCTION bump_page_generation_clock_fn();
     `,
   },
+  {
+    version: 108,
+    name: 'pages_embedding_signature',
+    // v0.41.31 — embedding provenance for real stale semantics.
+    //
+    // Adds `pages.embedding_signature TEXT NULL` = `<provider:model>:<dims>`
+    // stamped when a page's chunks are embedded (setPageEmbeddingSignature).
+    // A later model/dimension swap makes the stored signature differ from
+    // the current one, so countStaleChunks/sumStaleChunkChars (with the
+    // `signature` opt) and invalidateStaleSignatureEmbeddings can detect and
+    // re-embed those pages.
+    //
+    // GRANDFATHER (critical): the stale predicate is
+    //   `embedding_signature IS NOT NULL AND embedding_signature <> $current`
+    // so a NULL signature is NEVER stale. After this migration every existing
+    // page has NULL — none are flagged — so the next `embed --stale` does NOT
+    // re-embed the whole corpus. Signatures only get stamped going forward.
+    //
+    // No index: the column is read only via a JOINed pages row in the
+    // chunk-grain stale queries; no standalone lookup hot path. ADD COLUMN
+    // with no DEFAULT (NULL) is metadata-only on Postgres 11+ / PGLite 17.5.
+    idempotent: true,
+    sql: `
+      ALTER TABLE pages ADD COLUMN IF NOT EXISTS embedding_signature TEXT NULL;
+    `,
+  },
+  {
+    version: 109,
+    name: 'sources_newest_content_at',
+    // v0.41.32.0 (supersedes #1623): durable newest-COMMIT timestamp per source,
+    // written at sync time (HEAD committer time). The REMOTE staleness path
+    // (federation_health, get_status_snapshot MCP op) reads this column instead
+    // of shelling out to git on a DB-supplied local_path — preserving the
+    // v0.41.27.0 trust boundary while still killing the quiet-repo false-SEVERE
+    // alarm. ADD COLUMN with a NULL default is metadata-only on both engines
+    // (instant, no table rewrite). Mirror lives in pglite-schema.ts +
+    // schema.sql (fresh-install path) and the applyForwardReferenceBootstrap
+    // probe set in both engines. Renumbered 108→109 on the master merge that
+    // landed v0.41.31's pages_embedding_signature at v108.
+    idempotent: true,
+    sql: `ALTER TABLE sources ADD COLUMN IF NOT EXISTS newest_content_at TIMESTAMPTZ`,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
