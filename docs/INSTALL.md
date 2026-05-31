@@ -61,9 +61,21 @@ gbrain serve                      # stdio MCP (Claude Desktop / Code / Cursor)
 gbrain serve --http               # HTTP MCP with OAuth 2.1 + admin dashboard
 ```
 
+**Wire a coding agent to a remote brain in one command** (when you have an HTTP
+server + a bearer token): `gbrain connect` prints a paste-ready setup block, or
+`--install` runs it and smoke-tests the token.
+
+```bash
+gbrain auth create "claude-code"
+gbrain connect https://your-host/mcp --token gbrain_xxx                      # Claude Code (default)
+gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex        # Codex (env-var bearer)
+gbrain connect https://your-host/mcp --agent perplexity --oauth --register   # Perplexity (OAuth)
+```
+
 Per-client setup guides live in [`docs/mcp/`](mcp/):
 
 - [`docs/mcp/CLAUDE_CODE.md`](mcp/CLAUDE_CODE.md)
+- [`docs/mcp/CODEX.md`](mcp/CODEX.md)
 - [`docs/mcp/CLAUDE_DESKTOP.md`](mcp/CLAUDE_DESKTOP.md)
 - [`docs/mcp/CHATGPT.md`](mcp/CHATGPT.md)
 - [`docs/mcp/PERPLEXITY.md`](mcp/PERPLEXITY.md)
