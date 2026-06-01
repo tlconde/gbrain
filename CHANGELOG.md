@@ -2,6 +2,87 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.4.0] - 2026-06-01
+
+**`gbrain think` stops writing blank pages, and a bad `--model` now fails loud instead of going quiet.**
+
+If you ran `gbrain think --model anthropic/claude-sonnet-4-6 --save` (with a slash
+in the model name), gbrain used to quietly give up on the real model, fall back to
+a "no LLM available" stub, and save an empty synthesis page anyway — exit code 0,
+no error. One person ran this in a loop and got 200 blank pages before noticing.
+
+This release closes that whole class of silent failure:
+
+- **Slash-form model names work now.** `anthropic/claude-sonnet-4-6` is treated the
+  same as `anthropic:claude-sonnet-4-6`. A bare name like `claude-opus-4-7` still
+  defaults to Anthropic.
+- **An explicit `--model` you typed but can't run is a hard error.** Typo the model,
+  pick a provider with no API key, name a model that doesn't exist — `gbrain think`
+  exits 1 with a clear message (and a paste-ready fix when there is one), instead of
+  silently degrading to the stub. Omitting `--model` keeps the old graceful behavior:
+  no key, no `--save` still prints the gathered context and exits 0.
+- **An empty synthesis is never saved.** If the model returns nothing, malformed
+  output, or an empty answer, no page is written. `gbrain think --save` with no real
+  synthesis exits 1 and tells you nothing was saved.
+- **The nightly auto-think cycle got the same guard.** An empty synthesis no longer
+  counts as "done" or advances the cooldown, so the next cycle retries instead of
+  silently skipping for days.
+
+If you typed `--model` and it was unusable before, you were getting a blank page with
+exit 0. Now you get a real answer, or a real error. No silent middle.
+
+### How it works (the precise bits)
+
+- New `normalizeModelId` (`src/core/model-id.ts`) is the one shared `provider:model`
+  normalizer; it replaced four copies of a colon-only inline that mangled slash form.
+  A malformed leading separator (`:foo` / `/foo`) is returned unchanged so the
+  resolver throws loudly instead of coercing it to Anthropic.
+- New `validateModelId` + `probeChatModel` (`src/core/ai/gateway.ts`) are the shared
+  id-validity + key probe. `runThink` calls the probe before retrieval and hard-errors
+  on an explicit, unusable model.
+- `ThinkResult.synthesisOk` gates persistence: `persistSynthesis` returns a
+  `SYNTHESIS_EMPTY_NOT_PERSISTED` signal (never writes) when synthesis didn't happen.
+- `hasAnthropicKey` consolidated into `src/core/ai/anthropic-key.ts` (three private
+  copies collapsed to one).
+- The MCP `think` op enforces the same hard-error on an explicit unusable `model`.
+
+## To take advantage of v0.42.4.0
+
+Nothing to run — the fix is automatic on upgrade (`gbrain upgrade`). To verify:
+
+```bash
+# Slash form now works (with a real key):
+gbrain think "what do we know about acme-example" --model anthropic/claude-sonnet-4-6 --save
+
+# A bad model is now a loud error (exit 1), not a blank page:
+gbrain think "..." --model anthropic/claude-bogus-9 --save
+```
+
+If a bad `--model` still silently writes an empty page, file an issue with the
+command you ran and `gbrain doctor` output.
+
+### Itemized changes
+
+- `src/core/model-id.ts` — `normalizeModelId(input, defaultProvider?)`; slash→colon,
+  bare→default, empty/whitespace/leading-separator returned unchanged.
+- `src/core/ai/gateway.ts` — exported `validateModelId` + `ModelIdValidity` (registry
+  id-validity), `probeChatModel` + `ChatModelProbe` (validity + Anthropic-key
+  availability).
+- `src/core/ai/anthropic-key.ts` (new) — single shared `hasAnthropicKey()`.
+- `src/core/think/index.ts` — early explicit-model hard-throw, `modelExplicit` opt,
+  `synthesisOk` at all return sites, persist-skip signal, builder uses the shared probe.
+- `src/commands/think.ts` — `modelExplicit: !!model`, try/catch → exit 1, empty-slug
+  save guard, updated `--model` help.
+- `src/core/operations.ts` — MCP `think` op sets `modelExplicit`, maps `saved_slug` `''`→null.
+- `src/core/cycle/synthesize.ts` — `makeJudgeClient` routed through `validateModelId`.
+- `src/core/cycle/auto-think.ts` — empty synthesis → `partial`, no cooldown advance.
+- `src/core/facts/extract.ts`, `src/core/conversation-parser/llm-base.ts` — use the
+  shared normalizer + `hasAnthropicKey`.
+- Tests: `test/model-id.test.ts`, `test/ai/gateway-probe-chat-model.test.ts`,
+  `test/ai/anthropic-key.test.ts`, `test/think-gateway-adapter.test.ts`,
+  `test/think-pipeline.serial.test.ts`, `test/cycle/synthesize-gateway-adapter.test.ts`,
+  `test/auto-think-phase.test.ts`.
+
 ## [0.42.1.0] - 2026-05-29
 
 **Skill self-improvement no longer starts from a blank file.**

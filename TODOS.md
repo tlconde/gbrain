@@ -3807,3 +3807,38 @@ judgment.
 
 **Depends on:** human judgment on which historical CHANGELOG entries to
 leave intact vs scrub.
+
+### Provider-symmetric early gate for `think --model` (#1698 follow-up, P3)
+
+**What:** Make `runThink`'s explicit-`--model` early gate reject an explicit
+NON-Anthropic model with no provider key BEFORE gather, not after. Today
+`probeChatModel` (`src/core/ai/gateway.ts`) only pre-checks the Anthropic key;
+non-Anthropic providers pass the early gate and hard-error at the create-callback
+rethrow instead (one wasted retrieval gather). The deviation is documented as D1
+in the #1698 fix and is **accept-as-is** — pinned by the "D1 backstop" test in
+`test/think-gateway-adapter.test.ts` (build succeeds, `create()` throws).
+
+**Why:** Symmetry — every explicit unusable model fails at one chokepoint, so the
+"no silent degrade on explicit model" guarantee is provable in a single place
+rather than relying on the create-callback backstop for non-Anthropic providers.
+Saves one gather per failure in the rare explicit-non-Anthropic-no-key case.
+
+**Pros:** single validation chokepoint; explicit > clever.
+**Cons:** the obvious implementation (route `probeChatModel` onto the gateway's
+`isAvailable` for all providers) carries an unconfigured-gateway false-reject
+footgun — `isAvailable` returns `false` when `_config` is absent even if an env
+key exists, which could false-reject a *usable* model in some test/unconfigured
+paths. A correct version needs a config-independent provider-general key probe
+(reads each recipe's auth resolver against env+config without the gateway's
+runtime `_config`), plus the full targeted-test sweep to prove no regression
+across the ~13 think tests + the non-explicit `tryBuildGatewayClient` build path.
+
+**Context:** Surfaced by both the diff-level eng review (rated P3) and an
+independent codex pass (rated P1) of the #1698 implementation. Severity tension
+resolved accept-as-is: the safety property (no silent degrade on explicit unusable
+model) is already met; this is a timing/symmetry improvement, not a safety fix.
+Start at `probeChatModel` in `src/core/ai/gateway.ts` and the explicit gate in
+`runThink` (`src/core/think/index.ts`).
+
+**Depends on:** a config-independent provider-general key probe (new gateway
+helper) so the `isAvailable` unconfigured-gateway false-reject footgun is avoided.
