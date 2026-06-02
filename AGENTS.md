@@ -112,7 +112,9 @@ diff-aware subset during fast iteration on a focused branch. Requires Docker
 Manual path: `bun test` plus the E2E lifecycle described in `./CLAUDE.md` (spin
 up the test Postgres container, run `bun run test:e2e`, tear it down).
 
-Ship via the `/ship` skill, not by hand.
+Ship via the `/ship` skill, not by hand. The full release + contributor process
+(CHANGELOG voice, version-locations sync, PR conventions, community-PR-wave) lives in
+[`./docs/RELEASING.md`](./docs/RELEASING.md); read it before shipping.
 
 ## Privacy
 

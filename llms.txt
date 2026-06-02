@@ -47,6 +47,7 @@ Repo: https://github.com/garrytan/gbrain
 ## Contributing
 
 - [docs/TESTING.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/TESTING.md): Test command tiers, the test-isolation lint (R1-R4), the canonical PGLite block, withEnv, the E2E DB lifecycle, and the file taxonomy. Maintainer-facing.
+- [docs/RELEASING.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/RELEASING.md): Full release + contributor process: pre-ship test requirements, the CHANGELOG voice + release-summary template, the 'To take advantage of vX' block, version migrations, GitHub Actions SHA refresh, PR conventions, community-PR-wave. (Ship IRON RULES stay inline in CLAUDE.md.)
 
 ## Philosophy
 

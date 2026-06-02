@@ -241,6 +241,13 @@ export const SECTIONS: DocSection[] = [
         path: "docs/TESTING.md",
         includeInFull: false,
       },
+      {
+        title: "docs/RELEASING.md",
+        description:
+          "Full release + contributor process: pre-ship test requirements, the CHANGELOG voice + release-summary template, the 'To take advantage of vX' block, version migrations, GitHub Actions SHA refresh, PR conventions, community-PR-wave. (Ship IRON RULES stay inline in CLAUDE.md.)",
+        path: "docs/RELEASING.md",
+        includeInFull: false,
+      },
     ],
   },
   {
