@@ -79,6 +79,14 @@ command, no migration.
   caller-supplied benchmark/held-out paths to the skills directory for remote callers.
 
 #### Fixed
+- **Multi-turn tool loops work again.** Any agent loop that calls a tool and feeds the
+  result back (`gbrain skillopt` rollouts AND production background subagent jobs) was
+  crashing the moment the model called a tool, with "messages do not match the
+  ModelMessage[] schema". The shipped AI SDK had tightened its message + tool-schema
+  validation; the gateway now wraps tool schemas correctly and converts tool results into
+  the structured shape the SDK expects, so the loop round-trips. Surfaced end-to-end by the
+  SkillOpt real-LLM eval — the kind of bug only running the feature against a live model
+  catches.
 - **`--no-mutate` now writes `proposed.md`** with the winning rewrite (was a stub that
   wrote nothing).
 - **`--max-runtime-min` is enforced** via a wall-clock deadline between optimization steps.
