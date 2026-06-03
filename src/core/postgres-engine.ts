@@ -97,6 +97,19 @@ export class PostgresEngine implements BrainEngine {
   /** Whether a reconnect is in progress (prevents concurrent reconnects). */
   private _reconnecting = false;
   /**
+   * #1471: module-singleton OWNERSHIP token. `true` only for the engine whose
+   * connect() actually created the shared db.ts `sql` singleton (returned
+   * atomically by db.connect()). Borrowers — probe engines constructed while the
+   * singleton already exists (resolveLintContentSanity config-lift, doctor,
+   * integrity) — get `false` and must NOT db.disconnect() it, or they null the
+   * `sql` the long-lived owner (the cycle engine) still uses and every later
+   * phase throws "connect() has not been called". `_connectionStyle` alone can't
+   * separate owner from borrower: both are 'module'. Correct because the
+   * creator's lifetime dominates all borrowers — the CLI engine is created first
+   * and disconnected last (cli.ts), and borrowers are strictly nested.
+   */
+  private _ownsModuleSingleton = false;
+  /**
    * Tracks which connection path this engine is using so disconnect() is
    * idempotent. 'instance' = own _sql pool (poolSize was set);
    * 'module' = the module-level db singleton (backward compat path).
@@ -194,8 +207,12 @@ export class PostgresEngine implements BrainEngine {
       });
       this.connectionManager.setReadPool(this._sql);
     } else {
-      // Module-level singleton (backward compat for CLI main engine)
-      await db.connect(config);
+      // Module-level singleton (backward compat for CLI main engine).
+      // #1471: db.connect() returns whether THIS call created the singleton —
+      // decided atomically inside connect() (no await between its null-check and
+      // pool assignment), so two concurrent module connects can't both claim
+      // ownership. Store the token; only the owner tears the singleton down.
+      this._ownsModuleSingleton = await db.connect(config);
       this._connectionStyle = 'module';
 
       // v0.30.1: connection-manager wraps the module singleton.
@@ -237,7 +254,13 @@ export class PostgresEngine implements BrainEngine {
       return;
     }
     if (this._connectionStyle === 'module') {
-      await db.disconnect();
+      // #1471: only the engine that created the shared singleton may tear it
+      // down. A borrower clears its own markers WITHOUT calling db.disconnect(),
+      // so a probe engine's teardown can't clobber the owner's live connection.
+      if (this._ownsModuleSingleton) {
+        await db.disconnect();
+        this._ownsModuleSingleton = false;
+      }
       this._connectionStyle = null;
     }
     // else: nothing to disconnect (already done or never connected)
@@ -1984,7 +2007,7 @@ export class PostgresEngine implements BrainEngine {
         },
         // v0.41.25.0 (#1570): on null-singleton retryable errors, rebuild
         // the connection BEFORE the inter-attempt sleep so the next attempt
-        // sees a live pool. `this.reconnect()` is race-safe via
+        // sees a live pool. `this.reconnect()` is race-safe via the
         // `_reconnecting` guard, handles both module and instance pools,
         // and is a fast no-op when the underlying client is still healthy
         // (postgres.js's own connection-replacement covers that case).

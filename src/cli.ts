@@ -1237,6 +1237,12 @@ async function handleCliOnly(command: string, args: string[]) {
     try {
       await runDream(eng, args);
     } finally {
+      // #1471 invariant tripwire (the dream-cycle owner): `eng` created the
+      // module singleton (first module connector) and is disconnected LAST,
+      // here, after the whole cycle. The ownership fix relies on this owner's
+      // lifetime strictly dominating every borrower (lint/doctor probe engines
+      // created mid-cycle). Do NOT disconnect `eng` before runDream returns, or
+      // a borrower could outlive the owner and lose the shared singleton.
       if (eng) await eng.disconnect();
     }
     return;
@@ -1898,6 +1904,8 @@ async function handleCliOnly(command: string, args: string[]) {
     // hung Haiku), THEN disconnect. The drain-before-disconnect is the causal
     // fix; the force-exit defense below is secondary (it CANNOT preempt a WASM
     // busy-loop on a pinned JS thread — that's exactly why the drain matters).
+    // #1471: this is also the fall-through OWNER-disconnect — the owner is torn
+    // down LAST (after the drain), so module-singleton borrowers never outlive it.
     if (command !== 'serve') {
       const forceExit = shouldForceExitAfterMain();
       let hardExitTimer: ReturnType<typeof setTimeout> | undefined;

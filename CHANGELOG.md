@@ -15,6 +15,53 @@ The fix routes only the lock hot-path (`claim` and `renewLock`) to the direct **
 ### For contributors
 New `BrainEngine.executeRawDirect()` — same contract as `executeRaw`, but routes to the direct pool when dual-pool is active (no-op delegation on PGLite / non-Supabase / kill-switch). `claim`/`renewLock` in `minions/queue.ts` point at it. The Postgres impl shares its cancellation plumbing with `executeRaw` via a private `runUnsafe` helper; the in-transaction guard keys on `peekReadPool() !== _sql` so a tx clone is detected and never rerouted. New `test/postgres-execute-raw-direct.test.ts` covers the routing decision (dual-pool on/off × in-tx/not, plus abort short-circuit) without a live Postgres; `test/queue-lock-retry.test.ts` gains a guard that `claim` can never fall back to `executeRaw`. Eng review cleared the plan; the four lock/pool guards stay green.
 
+## [0.42.21.0] - 2026-06-02
+
+**Your nightly `gbrain dream` stops silently losing every database phase.** If you run gbrain on Postgres (local or Supabase), the dream cycle has been quietly failing: the `lint` and `backlinks` phases work, then `sync`, `synthesize`, `embed`, and the rest all blow up with `No database connection: connect() has not been called`. The extract phase reports "created 0 links" while actually dropping every row. Run the same phases one at a time in separate commands and they all work — only the full cycle breaks. The result: your brain quietly stops staying up to date, and the cycle leaves a stuck lock behind.
+
+The cause turned out to be a single sentence of logic. The dream cycle opens one long-lived database connection and reuses it for the whole run. But along the way, small helper steps (the lint config probe, doctor checks) briefly open their own connection handle. When those short-lived helpers finished and closed *their* handle, they were actually closing the *shared* connection the rest of the cycle still needed. Every later phase then found the connection gone.
+
+This release teaches gbrain who actually owns the shared connection. Only the engine that opened it is allowed to close it; the short-lived helpers leave it alone. The fix lands automatically:
+
+```
+gbrain upgrade
+gbrain dream --dir <your-brain>   # every DB phase now reports ✓, lock releases cleanly
+```
+
+Nothing to configure. If your dream cycle was the broken kind, it just starts working.
+
+### Under the hood
+
+The shared connection is the module-level `sql` singleton in `src/core/db.ts`. It was only ever nulled by `db.disconnect()` — postgres.js auto-reconnects its own internal pool and never touches our reference — so the singleton going null mid-cycle was always a "borrower" engine's disconnect cascading into `db.disconnect()`, never an idle-pooler drop. `PostgresEngine.disconnect()` called `db.disconnect()` for any `_connectionStyle === 'module'` engine with no check for whether that engine actually created the singleton.
+
+The fix adds an ownership token. `db.connect()` now returns whether THIS call created the singleton — decided atomically inside `connect()`, since there is no `await` between its `if (sql)` null-check and the synchronous `sql = postgres(...)` assignment, so two connects can't both claim creation. `PostgresEngine` stores that as `_ownsModuleSingleton` and only calls `db.disconnect()` when it owns the connection; borrowers clear their own marker and leave the shared pool alone. Two adjacent hardenings landed in the same pass: `db.disconnect()` now snapshots and nulls `sql` *before* awaiting `end()` (so a concurrent connect can't join a pool that's already closing), and `reconnect()` uses a shared in-flight promise so concurrent callers await the same reconnect instead of racing a half-rebuilt pool.
+
+Earlier partial fixes addressed symptoms: v0.41.27.0's retry-with-reconnect rescued the batch-write phases (extract) but not `sync`/`synthesize`, which don't go through the retry path; v0.42.5.0 stopped the lint phase from being a borrower but left the structural hole open for every other helper. This closes the hole at the source.
+
+### To take advantage of v0.42.21.0
+
+`gbrain upgrade` applies this automatically — there are no migrations or config to set. To confirm it took:
+
+1. Run a cycle and watch the phases:
+   ```bash
+   gbrain dream --dir <your-brain> --dry-run
+   ```
+   Every DB phase should report `✓`, not `✗ ... connect() has not been called`.
+2. Confirm no stuck lock:
+   ```bash
+   psql <your-db> -c "SELECT count(*) FROM gbrain_cycle_locks;"   # expect 0
+   ```
+3. If a DB phase still fails, please file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and the cycle's stderr.
+
+### Itemized changes
+
+- **`gbrain dream` on Postgres completes every phase.** The module-singleton ownership fix (`_ownsModuleSingleton` in `src/core/postgres-engine.ts`, `db.connect()` returning the creator token in `src/core/db.ts`) means a short-lived probe engine's `disconnect()` can no longer null the shared connection the cycle is using. Closes #1404, #1471, #1619 (and the symptom tracked in #1570/#1535).
+- **Connection teardown is concurrency-safe.** `db.disconnect()` snapshots + nulls the singleton before awaiting `end()`; `PostgresEngine.reconnect()` shares one in-flight `_reconnectPromise` so concurrent callers await it instead of racing.
+- **Tests:** new `test/postgres-engine-singleton-ownership.test.ts` (source-level guardrails for the ownership contract), an expanded DB-gated behavioral matrix in `test/e2e/postgres-engine-disconnect-idempotency.test.ts` (owner/borrower, creation-not-role, symmetric CLI-exit, owner-reconnect-with-live-borrower), a module-style asymmetry case in `test/postgres-engine-getter-selfheal.test.ts`, and the #1570 shared-recovery regression updated to assert the fixed contract.
+
+### For contributors
+
+This is the canonical landing for a long-standing class with ~15 competing community PRs and zero merged. Thanks to **@nullhex-io** (#1651) and **@joelwp** (#1667) — the ownership-flag approach that shipped, and to **@BrendanGahan**, **@xaviroblessarries**, and the other #1471 reporters for the precise root-cause walkthroughs. Three follow-ups are filed in `TODOS.md` (connection-lifecycle hardening under concurrent module connects, facts-queue drain on the dream/fall-through paths, stale ConnectionManager refresh after reconnect) — all pre-existing and not reachable in current gbrain.
 ## [0.42.20.0] - 2026-06-03
 
 **Three ways GBrain could freeze or go silent are fixed.** This release closes a
@@ -207,6 +254,7 @@ Things to know about: the sync bookmark (`last_commit`) still only advances when
 - **Vanished-on-disk added files are skipped, not failed.** A file added in the diff but deleted from disk by a commit after the pin (normal forward delete) is skipped and checkpointed instead of blocking the run.
 - **Cleaner single-flight backpressure.** `performSync` throws a typed `SyncLockBusyError`; the Minion `sync` handler catches it and marks the job *skipped* (not failed), so a cron/autopilot tick that hits a held lock defers to the holder without polluting the failed-job/crash metrics.
 - **Tests.** `test/sync-resumable-import.serial.test.ts` (13 cases): convergence regression, resume-skips-checkpointed, pinned-target/forward-drift, history-rewrite re-pin, `last_sync_at` not bumped on a blocked run + good-file banking, vanished-file skip, dry-run/empty-diff, plus pure-helper coverage for the fingerprint, clamp, and pool-budget math.
+
 ## [0.42.16.0] - 2026-06-02
 
 **`gbrain doctor` now tells you the brain is OOM-looping in one line, ranks every
