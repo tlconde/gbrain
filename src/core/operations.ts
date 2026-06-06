@@ -3372,7 +3372,7 @@ const idea_lineage: Operation = {
       ctx.engine.getBacklinks(resolved, scalarScopeOpts),
       ctx.engine.traverseGraph(resolved, 2, scope),
       ctx.engine.getTimeline(resolved, scalarSourceId ? { sourceId: scalarSourceId } : undefined),
-      ctx.engine.searchTakes(idea, { limit: maxTakes, takesHoldersAllowList: ctx.takesHoldersAllowList }),
+      ctx.engine.searchTakes(idea, { limit: maxTakes, ...scalarScopeOpts, takesHoldersAllowList: ctx.takesHoldersAllowList }),
       loadLatestContradictionFindings(ctx.engine),
     ]);
 

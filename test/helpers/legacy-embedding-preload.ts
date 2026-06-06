@@ -20,24 +20,6 @@
  */
 import { configureGateway, getEmbeddingDimensions } from '../../src/core/ai/gateway.ts';
 import { beforeEach } from 'bun:test';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-// Test isolation: point GBRAIN_HOME at a throwaway temp dir so the suite never
-// reads the developer's real `~/.gbrain/config.json`. Without this, any test
-// that asserts "no API key configured" behavior (think degradation,
-// hasAnthropicKey, probeLlmAvailability, ZE-key health, dream synthesize, …)
-// passes in CI (no config file) but FAILS on a developer machine with a
-// configured brain — `loadConfig()` resolves `anthropic_api_key` /
-// `openai_api_key` from the config file even after the env var is deleted.
-// Pinning GBRAIN_HOME makes local runs match CI's no-config state. Respect a
-// caller-set GBRAIN_HOME (init tests, deliberate overrides). Each shard is its
-// own process, so each gets its own empty home. loadConfig() is uncached and
-// honors GBRAIN_HOME at call time, so this takes effect for every read.
-if (!process.env.GBRAIN_HOME) {
-  process.env.GBRAIN_HOME = mkdtempSync(join(tmpdir(), 'gbrain-test-home-'));
-}
 
 const LEGACY_CONFIG = {
   embedding_model: 'openai:text-embedding-3-large',

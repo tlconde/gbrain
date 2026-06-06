@@ -99,18 +99,22 @@ export async function runEvalIdeaLineage(engine: BrainEngine, args: string[]): P
   }
 
   const startedAt = Date.now();
+  // Honor the canonical source resolution chain (--source / GBRAIN_SOURCE /
+  // .gbrain-source / default), matching every other CLI command.
+  const { resolveSourceId } = await import('../core/source-resolver.ts');
+  const sourceId = await resolveSourceId(engine, parsed.source ?? null);
   const ctx: OperationContext = {
     engine,
     config: cfg ?? ({} as never),
     logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
     dryRun: false,
     remote: false,
-    sourceId: parsed.source ?? 'default',
+    sourceId,
   } as OperationContext;
 
   const result = await operationsByName['idea_lineage'].handler(ctx, {
     idea: parsed.idea,
-    source: parsed.source,
+    source: sourceId,
   }) as Record<string, unknown> & {
     resolved: string | null;
     disambiguation_needed: boolean;

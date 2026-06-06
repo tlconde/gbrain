@@ -16,6 +16,12 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../src/core/takes-fence.ts';
+import { suppressAnthropicKey } from './helpers/no-anthropic-key.ts';
+
+// Isolate "no API key" assertions from the developer's real ~/.gbrain config.
+let __restoreNoKey: () => void;
+beforeAll(() => { __restoreNoKey = suppressAnthropicKey(); });
+afterAll(() => { __restoreNoKey?.(); });
 
 let engine: PGLiteEngine;
 let alicePageId: number;

@@ -5,6 +5,12 @@ import { runThink, persistSynthesis, type ThinkLLMClient } from '../src/core/thi
 import { sanitizeTakeForPrompt, renderTakesBlock } from '../src/core/think/sanitize.ts';
 import { resolveCitations, parseInlineCitations, normalizeStructuredCitations } from '../src/core/think/cite-render.ts';
 import { runGather } from '../src/core/think/gather.ts';
+import { suppressAnthropicKey } from './helpers/no-anthropic-key.ts';
+
+// Isolate "no API key" assertions from the developer's real ~/.gbrain config.
+let __restoreNoKey: () => void;
+beforeAll(() => { __restoreNoKey = suppressAnthropicKey(); });
+afterAll(() => { __restoreNoKey?.(); });
 
 let engine: PGLiteEngine;
 let alicePageId: number;
