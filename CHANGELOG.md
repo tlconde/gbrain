@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.42.31.0] - 2026-06-07
+## [0.42.32.0] - 2026-06-07
 
 **A single un-parseable note can no longer silently stop your brain from indexing anything new.** A page whose YAML frontmatter `title:` was a bare date (`title: 2024-06-01`) or number (`title: 1458`) parsed as a Date/number, not text — and the importer threw when it tried to lowercase it. That throw blocked the sync bookmark from advancing, so every later `gbrain sync` re-walked the whole repo, never reached HEAD, and quietly stopped indexing new commits. The page was committed and on GitHub, but `gbrain get` returned `page_not_found` with no surfaced error.
 
@@ -17,7 +17,7 @@ Two fixes. First, a non-string title/slug/type now coerces deterministically at 
 - **Non-string frontmatter titles no longer wedge indexing (#1939).** `title: 2024-06-01` / `title: 1458` (and date/number `slug`/`type`) coerce to deterministic strings at parse time instead of throwing, so a handful of date-named notes can't silently stop your brain from indexing new commits.
 - **`gbrain doctor` sync-failure severity is now consistent across surfaces (#1939).** Local and remote doctor share one decision: a stuck bookmark escalates to FAIL once it has blocked past the staleness window (or many files are blocking), while already-skipped pages stay a visible warning.
 
-### To take advantage of v0.42.31.0
+### To take advantage of v0.42.32.0
 Upgrade and run `gbrain sync` once. Any pages that previously wedged the importer (bare date/number titles) now import on their own. If a file still genuinely can't parse, sync tells you which one; fix it, or let the auto-skip valve move past it after a few runs and watch for it in `gbrain doctor`. Tune the threshold with `GBRAIN_SYNC_AUTOSKIP_AFTER` (set `0` to keep the strict fail-closed behavior).
 
 ## [0.42.29.0] - 2026-06-07

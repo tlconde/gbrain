@@ -1830,7 +1830,7 @@ at plan time and got carved out:
 
 - [ ] **v0.41+: drop the `--skip-failed` / `--retry-failed` + `--parallel > 1` restriction now that the failure log is source-scoped.**
   **Priority:** P3
-  v0.42.31.0 (#1939) landed the source-scoping infrastructure this TODO asked
+  v0.42.32.0 (#1939) landed the source-scoping infrastructure this TODO asked
   for: `src/core/sync-failure-ledger.ts` keys every row by `(source_id, path)`,
   `recordFailures(sourceId, …)` stamps it, `acknowledgeFailures(sourceId)` /
   `autoSkipFailures(sourceId, …)` filter to one source, and a cross-process
