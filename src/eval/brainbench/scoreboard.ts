@@ -55,8 +55,14 @@ function sortedRecord<T>(entries: Array<[string, T]>): Record<string, T> {
 
 /** Build the canonical, diff-stable committed-baseline shape from a run. */
 export function toCanonicalBaseline(
-  result: Pick<BrainBenchResult, 'cells'> & { receipt: { fixtures_hash: string } },
+  result: Pick<BrainBenchResult, 'cells'> & {
+    receipt: Pick<
+      BrainBenchResult['receipt'],
+      'fixtures_hash' | 'include_holdout' | 'llm'
+    > & { harnesses?: string[]; suites?: string[] };
+  },
   justification?: string,
+  config?: { harnesses: string[]; suites: string[] },
 ): BrainBenchBaseline {
   const cells: Array<[string, Record<string, number>]> = [];
   const counts: Array<[string, { gold_total: number; gold_failed: number }]> = [];
@@ -70,6 +76,12 @@ export function toCanonicalBaseline(
   const baseline: BrainBenchBaseline = {
     schema_version: BASELINE_SCHEMA_VERSION,
     fixtures_hash: result.receipt.fixtures_hash,
+    config: {
+      include_holdout: result.receipt.include_holdout,
+      llm: result.receipt.llm,
+      harnesses: [...(config?.harnesses ?? [])].sort(),
+      suites: [...(config?.suites ?? [])].sort(),
+    },
     cells: sortedRecord(cells),
     counts: sortedRecord(counts),
   };
@@ -83,11 +95,20 @@ export function serializeBaseline(b: BrainBenchBaseline): string {
   const ordered: Record<string, unknown> = {
     schema_version: b.schema_version,
     fixtures_hash: b.fixtures_hash,
+    config: b.config,
   };
   if (b.justification) ordered.justification = b.justification;
   ordered.cells = b.cells;
   ordered.counts = b.counts;
   return JSON.stringify(ordered, null, 2) + '\n';
+}
+
+/** Equality on the receipts-backed content (justification excluded — it's the bless note, not data). */
+function baselineDataEquals(a: BrainBenchBaseline, b: BrainBenchBaseline): boolean {
+  return (
+    serializeBaseline({ ...a, justification: undefined }) ===
+    serializeBaseline({ ...b, justification: undefined })
+  );
 }
 
 export function parseBaseline(raw: string, file: string): BrainBenchBaseline {
@@ -101,10 +122,19 @@ export function parseBaseline(raw: string, file: string): BrainBenchBaseline {
   if (b.schema_version !== BASELINE_SCHEMA_VERSION) {
     throw new Error(`brainbench baseline ${file}: schema_version must be ${BASELINE_SCHEMA_VERSION}`);
   }
-  if (typeof b.fixtures_hash !== 'string' || !b.cells || !b.counts) {
-    throw new Error(`brainbench baseline ${file}: missing fixtures_hash/cells/counts`);
+  if (typeof b.fixtures_hash !== 'string' || !b.cells || !b.counts || !b.config) {
+    throw new Error(`brainbench baseline ${file}: missing fixtures_hash/config/cells/counts`);
   }
   return b as BrainBenchBaseline;
+}
+
+function configsMatch(a: BrainBenchBaseline['config'], b: BrainBenchBaseline['config']): boolean {
+  return (
+    a.include_holdout === b.include_holdout &&
+    a.llm === b.llm &&
+    JSON.stringify(a.harnesses) === JSON.stringify(b.harnesses) &&
+    JSON.stringify(a.suites) === JSON.stringify(b.suites)
+  );
 }
 
 export interface CompareOpts {
@@ -143,6 +173,19 @@ export function compareBaselines(
   const sameHash = current.fixtures_hash === main.fixtures_hash;
   const mode: CompareOutcome['mode'] = sameHash ? 'same-hash' : 'corpus-bless';
 
+  // Run-config binding (red-team finding: fixtures_hash covers files only —
+  // a holdout-inclusive or --llm baseline is incomparable under the same hash).
+  if (!configsMatch(current.config, main.config)) {
+    return {
+      verdict: 'inconclusive',
+      mode,
+      breaches,
+      notes: [
+        `run config mismatch: current=${JSON.stringify(current.config)} vs baseline=${JSON.stringify(main.config)} — compare like with like`,
+      ],
+    };
+  }
+
   // Adverse metric/count movement vs main's baseline (both modes; in bless
   // mode it's what the justification must answer for).
   for (const [cell, mainCounts] of Object.entries(main.counts)) {
@@ -164,6 +207,19 @@ export function compareBaselines(
         baseline: mainCounts.gold_failed,
         current: cur.gold_failed,
         detail: `${cur.gold_failed - mainCounts.gold_failed} newly-failed gold item(s)`,
+      });
+    }
+    // Corpus hollowing (red-team finding): in bless mode, deleting failing
+    // fixtures (or flipping them holdout) shrinks gold_total and IMPROVES
+    // every rate — require a justification for shrunken coverage exactly like
+    // an adverse metric move.
+    if (!sameHash && cur.gold_total < mainCounts.gold_total) {
+      breaches.push({
+        cell,
+        metric: 'gold_total',
+        baseline: mainCounts.gold_total,
+        current: cur.gold_total,
+        detail: `gold coverage shrank by ${mainCounts.gold_total - cur.gold_total} item(s) — corpus hollowing requires justification`,
       });
     }
   }
@@ -235,6 +291,37 @@ export function compareBaselines(
       );
     }
     return { verdict: 'pass', mode, breaches, notes };
+  }
+
+  // SAME-HASH committed-baseline drift (red-team finding: two-PR gate
+  // poisoning). Any edit to the committed baseline without a fixture change
+  // must be receipts-backed by THIS run — otherwise a PR can doctor the file
+  // main's future gates compare against. Only consulted when the committed
+  // file pertains to this corpus (hash match); foreign-corpus runs ignore it.
+  const committed = opts.committedBaseline;
+  if (
+    sameHash &&
+    committed &&
+    committed.fixtures_hash === current.fixtures_hash &&
+    !baselineDataEquals(committed, main)
+  ) {
+    if (!baselineDataEquals(committed, current)) {
+      return {
+        verdict: 'inconclusive',
+        mode,
+        breaches,
+        notes: [
+          ...notes,
+          'committed baseline differs from main WITHOUT a fixture change and does not match this run — a baseline edit must be receipts-backed (`--update-baseline`) or reverted',
+        ],
+      };
+    }
+    notes.push('committed baseline updated (matches this run) — the diff vs main is the visible delta');
+    // Receipts-backed update: regressions still need blessing below.
+    if (breaches.length > 0 && committed.justification && !opts.allowRegression) {
+      notes.push(`regression blessed: ${committed.justification}`);
+      return { verdict: 'pass', mode, breaches, notes };
+    }
   }
 
   if (breaches.length > 0) {

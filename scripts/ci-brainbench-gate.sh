@@ -32,6 +32,13 @@ if ! git rev-parse --verify --quiet "${MAIN_REF}^{commit}" > /dev/null; then
 fi
 
 if git show "${MAIN_REF}:${BASELINE_PATH}" > "$MAIN_BASELINE" 2>/dev/null; then
+  # Deletion defense (red-team finding): if main carries a baseline but the
+  # working tree deleted it, every FUTURE PR would take the ungated
+  # first-landing path once this one merges. Refuse.
+  if [ ! -f "$BASELINE_PATH" ]; then
+    echo "[brainbench-gate] ERROR: ${BASELINE_PATH} exists on ${MAIN_REF} but is deleted in this tree — restore it or re-run --update-baseline" >&2
+    exit 2
+  fi
   echo "[brainbench-gate] comparing against ${MAIN_REF}:${BASELINE_PATH}"
   bun src/cli.ts eval brainbench --compare "$MAIN_BASELINE" --out "$OUT"
 else

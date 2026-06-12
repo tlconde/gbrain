@@ -55,7 +55,10 @@ export function conversationSlug(fixtureId: string): string {
 /** Render a fixture turn timestamp as the imessage-slack inline form (UTC). */
 function renderInlineTime(iso: string): string {
   const d = new Date(iso);
-  const date = iso.slice(0, 10);
+  // Date and time MUST come from the same UTC instant (red-team finding: a
+  // string-sliced date + UTC-converted time straddles midnight for non-Z
+  // offsets, silently reordering segments for foreign corpora).
+  const date = d.toISOString().slice(0, 10);
   let h = d.getUTCHours();
   const ampm = h >= 12 ? 'PM' : 'AM';
   h = h % 12;

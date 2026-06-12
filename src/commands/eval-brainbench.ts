@@ -340,17 +340,37 @@ export async function runEvalBrainBench(argv: string[]): Promise<never> {
   // Decide verdict BEFORE emitting (seed failures invalidate everything).
   let exitCode: 0 | 1 | 2 = 0;
   let compareOutcome: CompareOutcome | null = null;
+  const runConfig = { harnesses: args.harnesses, suites: args.suites };
+
+  // Baseline write happens BEFORE compare (red-team finding: the documented
+  // one-shot `--compare MAIN --update-baseline` flow used to read the stale
+  // committed file, exit 2, then overwrite it — training users to ignore
+  // exit 2). A run with seed failures NEVER writes a baseline: partial cells
+  // as the canonical gate target would be garbage with receipts.
+  if (args.updateBaseline) {
+    if (result.seed_failures.length > 0) {
+      process.stderr.write(
+        '[eval brainbench] REFUSING --update-baseline: run has seed failures (partial cells are not a baseline)\n',
+      );
+    } else {
+      const baseline = toCanonicalBaseline(result, args.justification ?? undefined, runConfig);
+      mkdirSync(dirname(args.updateBaseline), { recursive: true });
+      writeFileSync(args.updateBaseline, serializeBaseline(baseline));
+      process.stderr.write(`[eval brainbench] baseline written: ${args.updateBaseline}\n`);
+    }
+  }
 
   if (result.seed_failures.length > 0) {
     exitCode = 2;
   } else if (args.compare) {
     try {
       const main = readBaselineFile(args.compare[0]);
-      const current = toCanonicalBaseline(result);
-      let committed: BrainBenchBaseline | null = null;
-      if (current.fixtures_hash !== main.fixtures_hash && existsSync(args.committedBaseline)) {
-        committed = readBaselineFile(args.committedBaseline);
-      }
+      const current = toCanonicalBaseline(result, undefined, runConfig);
+      // Always consult the committed baseline when present — same-hash drift
+      // detection (two-PR gate poisoning) needs it as much as bless mode.
+      const committed: BrainBenchBaseline | null = existsSync(args.committedBaseline)
+        ? readBaselineFile(args.committedBaseline)
+        : null;
       compareOutcome = compareBaselines(current, main, {
         allowRegression: args.allowRegression ?? undefined,
         committedBaseline: committed,
@@ -360,13 +380,6 @@ export async function runEvalBrainBench(argv: string[]): Promise<never> {
       process.stderr.write(`eval brainbench: compare failed: ${(err as Error).message}\n`);
       exitCode = 2;
     }
-  }
-
-  if (args.updateBaseline) {
-    const baseline = toCanonicalBaseline(result, args.justification ?? undefined);
-    mkdirSync(dirname(args.updateBaseline), { recursive: true });
-    writeFileSync(args.updateBaseline, serializeBaseline(baseline));
-    process.stderr.write(`[eval brainbench] baseline written: ${args.updateBaseline}\n`);
   }
 
   // Canonical CI artifact first (sync write completes before any exit).

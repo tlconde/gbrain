@@ -282,6 +282,18 @@ export interface BrainBenchBaseline {
   schema_version: number;
   fixtures_hash: string;
   /**
+   * Run configuration the numbers were produced under (red-team finding:
+   * fixtures_hash covers files only — a holdout-inclusive or --llm baseline
+   * is byte-plausible under the same hash but incomparable). compareBaselines
+   * returns inconclusive on mismatch.
+   */
+  config: {
+    include_holdout: boolean;
+    llm: boolean;
+    harnesses: string[];
+    suites: string[];
+  };
+  /**
    * Required when a regression vs the prior baseline is being blessed
    * (decision 4) — visible in the PR diff, review-enforced.
    */

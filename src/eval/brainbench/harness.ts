@@ -263,9 +263,10 @@ export async function runBrainBench(
 
       progress(`continuity ${pairId}`);
       await resetTables(engine);
+      let writerSeed: SeedOutcome;
       let readerSeed: SeedOutcome;
       try {
-        await seedBrain(engine, writer.fixture);
+        writerSeed = await seedBrain(engine, writer.fixture);
         readerSeed = await seedBrain(engine, reader.fixture);
       } catch (err) {
         if (err instanceof SeedError) {
@@ -275,19 +276,39 @@ export async function runBrainBench(
         throw err;
       }
       fixturesRun += 2;
+      // The reader replays against BOTH fixtures' seeded pages — merge the
+      // slug→source maps or cross-source detection is structurally blind to
+      // writer-seeded slugs (red-team finding: the zero-gate was vacuous).
+      const mergedSeed: SeedOutcome = {
+        slugSource: new Map(writerSeed.slugSource),
+        pages: writerSeed.pages + readerSeed.pages,
+        facts: writerSeed.facts + readerSeed.facts,
+      };
+      for (const [slug, sources] of readerSeed.slugSource) {
+        const set = mergedSeed.slugSource.get(slug) ?? new Set<string>();
+        for (const s of sources) set.add(s);
+        mergedSeed.slugSource.set(slug, set);
+      }
 
       // The writer's decisions persist through the PRODUCTION pipeline —
-      // harness-independent in v1, so it runs once per pair.
-      await runWriteBack(engine, writer.fixture, writer.gold, {
+      // harness-independent in v1, so it runs once per pair. Writers that
+      // declare the write-back suite are SCORED here too (red-team finding:
+      // the score was computed and dropped, leaving 15 writers' provenance
+      // gold unmeasured in the default run and making the write-back cell
+      // composition flag-dependent).
+      const writerWb = await runWriteBack(engine, writer.fixture, writer.gold, {
         llm: opts.llm,
         budgetUsd: opts.budgetUsd,
         budgetTracker: llmTracker,
       });
+      if (writer.fixture.suites.includes('write-back') && wantedSuites.has('write-back')) {
+        accumulateWriteBack(writeBackAgg, writer.fixture.fixture_id, writerWb);
+      }
 
       // Every requested harness reads the SAME persisted state (read-only).
       for (const readerHarness of opts.harnesses) {
         const readerAdapter = makeAdapter(readerHarness);
-        const readerRows = await replayFixture(engine, readerAdapter, reader, readerSeed, ['continuity']);
+        const readerRows = await replayFixture(engine, readerAdapter, reader, mergedSeed, ['continuity']);
         turnRows.push(...readerRows);
 
         const activeSource = reader.fixture.active_source ?? 'default';

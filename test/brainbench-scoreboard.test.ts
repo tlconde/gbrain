@@ -26,8 +26,14 @@ function cell(partial: Partial<SuiteMetrics>): SuiteMetrics {
   };
 }
 
+const TEST_CONFIG = { harnesses: ['openclaw'], suites: ['know-to-ask'] };
+
 function mkBaseline(cells: SuiteMetrics[], hash = 'hash-a', justification?: string): BrainBenchBaseline {
-  return toCanonicalBaseline({ cells, receipt: { fixtures_hash: hash } }, justification);
+  return toCanonicalBaseline(
+    { cells, receipt: { fixtures_hash: hash, include_holdout: false, llm: false } },
+    justification,
+    TEST_CONFIG,
+  );
 }
 
 describe('canonical baseline (decision 10)', () => {
@@ -164,10 +170,76 @@ describe('parseBaseline error paths (each names the offending file)', () => {
       /v99\.json: schema_version must be 1/,
     );
   });
-  test('missing cells/counts', () => {
+  test('missing config/cells/counts', () => {
     expect(() =>
       parseBaseline(JSON.stringify({ schema_version: 1, fixtures_hash: 'x' }), 'partial.json'),
-    ).toThrow(/partial\.json: missing fixtures_hash\/cells\/counts/);
+    ).toThrow(/partial\.json: missing fixtures_hash\/config\/cells\/counts/);
+  });
+});
+
+describe('red-team hardening (gate gaming vectors)', () => {
+  test('run-config mismatch (holdout/llm/harness set) → inconclusive, never a quiet pass', () => {
+    const main = mkBaseline([cell({})]);
+    const current = toCanonicalBaseline(
+      { cells: [cell({})], receipt: { fixtures_hash: 'hash-a', include_holdout: true, llm: false } },
+      undefined,
+      TEST_CONFIG,
+    );
+    const out = compareBaselines(current, main);
+    expect(out.verdict).toBe('inconclusive');
+    expect(out.notes.join(' ')).toContain('run config mismatch');
+  });
+
+  test('corpus hollowing: bless-mode gold_total shrink requires justification', () => {
+    const main = mkBaseline([cell({ gold_total: 20, gold_failed: 5 })], 'hash-main');
+    // PR deletes the failing fixtures: fewer gold, better rate, no metric breach.
+    const shrunk = cell({ gold_total: 10, gold_failed: 0, metrics: { know_to_ask_failure_rate: 0, source_isolation_violations: 0 } });
+    const current = mkBaseline([shrunk], 'hash-new');
+    const committed = mkBaseline([shrunk], 'hash-new'); // matches the run, no justification
+    const out = compareBaselines(current, main, { committedBaseline: committed });
+    expect(out.verdict).toBe('regression');
+    expect(out.breaches.some((b) => b.metric === 'gold_total' && b.detail.includes('hollowing'))).toBe(true);
+    // With a justification it passes — reviewable in the diff.
+    const blessed = mkBaseline([shrunk], 'hash-new', 'retired flaky fixtures, see PR');
+    expect(compareBaselines(current, main, { committedBaseline: blessed }).verdict).toBe('pass');
+  });
+
+  test('two-PR poisoning: same-hash committed-baseline edit that matches NO run → inconclusive', () => {
+    const main = mkBaseline([cell({ gold_failed: 1 })]);
+    const current = mkBaseline([cell({ gold_failed: 1 })]); // run == main, nothing changed
+    const doctored = mkBaseline([cell({ gold_failed: 5 })]); // committed file pretends worse counts
+    const out = compareBaselines(current, main, { committedBaseline: doctored });
+    expect(out.verdict).toBe('inconclusive');
+    expect(out.notes.join(' ')).toContain('receipts-backed');
+  });
+
+  test('same-hash receipts-backed improvement (committed == run) passes with the delta noted', () => {
+    const main = mkBaseline([cell({ gold_failed: 2, metrics: { know_to_ask_failure_rate: 0.2, source_isolation_violations: 0 } })]);
+    const improved = cell({ gold_failed: 1, metrics: { know_to_ask_failure_rate: 0.1, source_isolation_violations: 0 } });
+    const current = mkBaseline([improved]);
+    const committed = mkBaseline([improved]);
+    const out = compareBaselines(current, main, { committedBaseline: committed });
+    expect(out.verdict).toBe('pass');
+    expect(out.notes.join(' ')).toContain('visible delta');
+  });
+
+  test('same-hash receipts-backed REGRESSION still needs a justification to pass', () => {
+    const main = mkBaseline([cell({ gold_failed: 1 })]);
+    const regressed = cell({ gold_failed: 3 });
+    const current = mkBaseline([regressed]);
+    const unjustified = mkBaseline([regressed]);
+    expect(compareBaselines(current, main, { committedBaseline: unjustified }).verdict).toBe('regression');
+    const justified = mkBaseline([regressed], 'hash-a', 'intentional trade, see PR');
+    const out = compareBaselines(current, main, { committedBaseline: justified });
+    expect(out.verdict).toBe('pass');
+    expect(out.notes.join(' ')).toContain('intentional trade');
+  });
+
+  test('foreign-corpus committed baseline (hash mismatch with current) is ignored in same-hash mode', () => {
+    const main = mkBaseline([cell({ gold_failed: 1 })]);
+    const current = mkBaseline([cell({ gold_failed: 1 })]);
+    const foreign = mkBaseline([cell({ gold_failed: 99 })], 'some-other-corpus');
+    expect(compareBaselines(current, main, { committedBaseline: foreign }).verdict).toBe('pass');
   });
 });
 
@@ -189,7 +261,11 @@ describe('renderScoreboardMarkdown', () => {
       seed_failures: [],
     };
     const main = mkBaseline([cell({ gold_failed: 0 })]);
-    const current = toCanonicalBaseline({ cells: result.cells, receipt: { fixtures_hash: 'hash-a' } });
+    const current = toCanonicalBaseline(
+      { cells: result.cells, receipt: { fixtures_hash: 'hash-a', include_holdout: false, llm: false } },
+      undefined,
+      TEST_CONFIG,
+    );
     const outcome = compareBaselines(current, main);
     const md1 = renderScoreboardMarkdown(result, outcome);
     const md2 = renderScoreboardMarkdown(result, outcome);

@@ -1,6 +1,21 @@
 {
   "schema_version": 1,
   "fixtures_hash": "76f201590dd3ad7a929e2e12efc9bf1406627b10ef4edbcfe7caf379aafd4090",
+  "config": {
+    "include_holdout": false,
+    "llm": false,
+    "harnesses": [
+      "claude-code",
+      "codex",
+      "openclaw"
+    ],
+    "suites": [
+      "continuity",
+      "know-to-ask",
+      "push",
+      "write-back"
+    ]
+  },
   "cells": {
     "claude-code/continuity": {
       "avg_injected_tokens": 75.3333,
@@ -80,7 +95,7 @@
       "gold_failed": 32
     },
     "claude-code/write-back": {
-      "gold_total": 46,
+      "gold_total": 58,
       "gold_failed": 0
     },
     "codex/continuity": {
@@ -96,7 +111,7 @@
       "gold_failed": 52
     },
     "codex/write-back": {
-      "gold_total": 46,
+      "gold_total": 58,
       "gold_failed": 0
     },
     "openclaw/continuity": {
@@ -112,7 +127,7 @@
       "gold_failed": 18
     },
     "openclaw/write-back": {
-      "gold_total": 46,
+      "gold_total": 58,
       "gold_failed": 0
     }
   }
